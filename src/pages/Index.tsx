@@ -2,37 +2,36 @@ import { useState, useRef, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
 const FOREST_BG = "https://cdn.poehali.dev/projects/79e4e100-d1c2-471c-9ef6-625d5613c665/files/f1de3835-ac99-46e7-ad98-c681297bac6d.jpg";
+const API_URL = "https://functions.poehali.dev/4247741b-b3f0-44cb-b54f-31350ab9bf86";
 
-const MOCK_RESULT = {
-  name: "Лотос Комарова",
-  latinName: "Nelumbo komarovii",
-  confidence: 94,
-  family: "Лотосовые (Nelumbonaceae)",
-  description:
-    "Реликтовое растение третичного периода, занесённое в Красную книгу России. Один из символов Приморского края. Цветки крупные, розово-белые, диаметром до 30 см, с тонким нежным ароматом.",
-  characteristics: [
-    { icon: "Ruler", label: "Высота", value: "до 120 см над водой" },
-    { icon: "Calendar", label: "Цветение", value: "июль — август" },
-    { icon: "Droplets", label: "Среда", value: "пресноводные водоёмы" },
-    { icon: "ShieldAlert", label: "Статус", value: "Красная книга РФ" },
-  ],
-  habitat:
-    "Встречается на озёрах Приханкайской низменности, преимущественно в окрестностях озера Ханка. Также известен на реках Уссури, Илистой и Мельгуновке.",
-  tags: ["Водное", "Реликт", "Охраняемое", "Цветковое"],
+type PlantResult = {
+  name: string;
+  latinName: string;
+  confidence: number;
+  family: string;
+  description: string;
+  characteristics: { icon: string; label: string; value: string }[];
+  habitat: string;
+  tags: string[];
+  found: boolean;
 };
 
-type AppState = "idle" | "preview" | "analyzing" | "result";
+type AppState = "idle" | "preview" | "analyzing" | "result" | "error";
 
 export default function Index() {
   const [state, setState] = useState<AppState>("idle");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [result, setResult] = useState<PlantResult | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) return;
     const url = URL.createObjectURL(file);
     setImageUrl(url);
+    setImageFile(file);
     setState("preview");
   }, []);
 
@@ -46,13 +45,36 @@ export default function Index() {
     [handleFile]
   );
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
+    if (!imageFile) return;
     setState("analyzing");
-    setTimeout(() => setState("result"), 2800);
+    setErrorMsg("");
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      try {
+        const resp = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64 }),
+        });
+        const data: PlantResult = await resp.json();
+        setResult(data);
+        setState("result");
+      } catch {
+        setErrorMsg("Не удалось связаться с сервером. Попробуйте ещё раз.");
+        setState("error");
+      }
+    };
+    reader.readAsDataURL(imageFile);
   };
 
   const handleReset = () => {
     setImageUrl(null);
+    setImageFile(null);
+    setResult(null);
+    setErrorMsg("");
     setState("idle");
   };
 
@@ -207,9 +229,41 @@ export default function Index() {
             </div>
           )}
 
+          {/* Error */}
+          {state === "error" && (
+            <div className="glass-card rounded-2xl p-8 text-center max-w-sm w-full animate-scale-in">
+              <div className="text-4xl mb-4">😔</div>
+              <h3 className="font-cormorant text-2xl text-cream font-semibold mb-2">Что-то пошло не так</h3>
+              <p className="font-golos text-sm text-muted-foreground mb-6">{errorMsg}</p>
+              <button
+                onClick={handleReset}
+                className="w-full bg-moss hover:bg-moss-dark text-white font-golos font-medium py-3 px-6 rounded-xl transition-all duration-200"
+              >
+                Попробовать снова
+              </button>
+            </div>
+          )}
+
           {/* Result */}
-          {state === "result" && (
+          {state === "result" && result && (
             <div className="w-full max-w-2xl animate-fade-in">
+              {/* Not found */}
+              {!result.found ? (
+                <div className="glass-card rounded-2xl p-8 text-center mb-4">
+                  <div className="text-4xl mb-4">🌿</div>
+                  <h3 className="font-cormorant text-2xl text-cream font-semibold mb-2">Растение не определено</h3>
+                  <p className="font-golos text-sm text-muted-foreground mb-6">
+                    Попробуйте сделать более чёткое фото на светлом фоне, чтобы было видно листья и цветы.
+                  </p>
+                  <button
+                    onClick={handleReset}
+                    className="w-full bg-moss hover:bg-moss-dark text-white font-golos font-medium py-3 px-6 rounded-xl transition-all"
+                  >
+                    Загрузить другое фото
+                  </button>
+                </div>
+              ) : (
+                <>
               {/* Confidence banner */}
               <div className="glass-card rounded-2xl overflow-hidden mb-4">
                 <div className="flex items-stretch">
@@ -223,20 +277,20 @@ export default function Index() {
                   <div className="p-5 flex flex-col justify-center flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-golos result-badge rounded-full px-2 py-0.5 text-moss-light">
-                        Совпадение {MOCK_RESULT.confidence}%
+                        Совпадение {result.confidence}%
                       </span>
                     </div>
                     <h3 className="font-cormorant text-2xl sm:text-3xl text-cream font-semibold leading-tight">
-                      {MOCK_RESULT.name}
+                      {result.name}
                     </h3>
                     <p className="font-golos text-sm text-muted-foreground italic mt-0.5">
-                      {MOCK_RESULT.latinName}
+                      {result.latinName}
                     </p>
                     <p className="font-golos text-xs text-muted-foreground/70 mt-1">
-                      {MOCK_RESULT.family}
+                      {result.family}
                     </p>
                     <div className="flex flex-wrap gap-1.5 mt-3">
-                      {MOCK_RESULT.tags.map((tag) => (
+                      {result.tags?.map((tag) => (
                         <span key={tag} className="text-xs font-golos px-2 py-0.5 rounded-full bg-forest-700/60 text-moss-light border border-moss/20">
                           {tag}
                         </span>
@@ -253,18 +307,19 @@ export default function Index() {
                   <h4 className="font-cormorant text-lg text-cream font-semibold">Описание</h4>
                 </div>
                 <p className="font-golos text-sm text-foreground/80 leading-relaxed">
-                  {MOCK_RESULT.description}
+                  {result.description}
                 </p>
               </div>
 
               {/* Characteristics */}
+              {result.characteristics?.length > 0 && (
               <div className="glass-card rounded-2xl p-5 mb-4 animate-fade-in animate-delay-200" style={{ opacity: 0 }}>
                 <div className="flex items-center gap-2 mb-4">
                   <Icon name="Leaf" size={16} className="text-moss-light" />
                   <h4 className="font-cormorant text-lg text-cream font-semibold">Характеристики</h4>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {MOCK_RESULT.characteristics.map((c) => (
+                  {result.characteristics.map((c) => (
                     <div key={c.label} className="bg-forest-800/50 rounded-xl p-3 border border-border/50">
                       <div className="flex items-center gap-2 mb-1">
                         <Icon name={c.icon} fallback="Leaf" size={13} className="text-moss-light" />
@@ -275,6 +330,7 @@ export default function Index() {
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Habitat */}
               <div className="glass-card rounded-2xl p-5 mb-5 animate-fade-in animate-delay-300" style={{ opacity: 0 }}>
@@ -283,7 +339,7 @@ export default function Index() {
                   <h4 className="font-cormorant text-lg text-cream font-semibold">Места произрастания</h4>
                 </div>
                 <p className="font-golos text-sm text-foreground/80 leading-relaxed">
-                  {MOCK_RESULT.habitat}
+                  {result.habitat}
                 </p>
               </div>
 
@@ -296,11 +352,9 @@ export default function Index() {
                   <Icon name="RotateCcw" size={15} />
                   Новое фото
                 </button>
-                <button className="flex-1 bg-moss hover:bg-moss-dark text-white font-golos font-medium py-3 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm hover:scale-[1.02]">
-                  <Icon name="Share2" size={15} />
-                  Поделиться
-                </button>
               </div>
+              </>
+              )}
             </div>
           )}
         </main>
